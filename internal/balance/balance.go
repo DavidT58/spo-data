@@ -42,7 +42,7 @@ func CalculateBalance(config *configs.Config, blockfrostClient blockfrost.APICli
 		log.Fatal("Failed to get last price:", err)
 	}
 
-	if time.Since(lastPrice.CreatedAt) > 0*time.Hour {
+	if time.Since(lastPrice.CreatedAt) > 2*time.Hour {
 		// price, err := lbankClient.GetPrice("ap3x_usdt")
 		price, err := mexcClient.GetPrice()
 		if err != nil {
