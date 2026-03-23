@@ -9,7 +9,7 @@ import (
 
 	"spo-data/configs"
 	"spo-data/internal/database"
-	"spo-data/internal/mexc"
+	"spo-data/internal/lbank"
 	"spo-data/internal/models"
 
 	"github.com/blockfrost/blockfrost-go"
@@ -33,8 +33,8 @@ func CalculateBalance(config *configs.Config, blockfrostClient blockfrost.APICli
 
 	fmt.Printf("Total Amount: %f\n", sum)
 
-	// lbankClient := lbank.NewClient()
-	mexcClient := mexc.NewClient()
+	lbankClient := lbank.NewClient()
+	// mexcClient := mexc.NewClient()
 
 	lastPrice, err := database.GetLastPrice()
 
@@ -43,8 +43,8 @@ func CalculateBalance(config *configs.Config, blockfrostClient blockfrost.APICli
 	}
 
 	if time.Since(lastPrice.CreatedAt) > 2*time.Hour {
-		// price, err := lbankClient.GetPrice("ap3x_usdt")
-		price, err := mexcClient.GetPrice()
+		price, err := lbankClient.GetPrice("ap3x_usdt")
+		// price, err := mexcClient.GetPrice()
 		if err != nil {
 			log.Fatal("Failed to fetch price:", err)
 		}
@@ -53,7 +53,9 @@ func CalculateBalance(config *configs.Config, blockfrostClient blockfrost.APICli
 			log.Fatal("Failed to parse price:", err)
 		}
 
-		lastPrice, err = database.StorePrice(models.Price{Price: price.Price})
+		lastPrice, err = database.StorePrice(models.Price{
+			Price: price.Data[0].Price,
+		})
 
 		if err != nil {
 			log.Fatal("Failed to store price in database:", err)
