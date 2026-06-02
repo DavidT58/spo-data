@@ -43,13 +43,17 @@ func LoadConfigFromYAML(filePath string) (Config, error) {
 
 // LoadAllConfigs reads every operator config file in dir, tags each pool with
 // its operator (the filename), and merges them into a single Config. All files
-// are expected to share the same blockfrost_address; if they diverge, the first
-// non-empty address is used and a warning is returned in the error-free path via
-// stderr-style logging by the caller (we just pick the first here).
-func LoadAllConfigs(dir string) (Config, error) {
+// are expected to share the same blockfrost_address; the first non-empty address
+// is used.
+//
+// A file that fails to parse is SKIPPED (not fatal) and reported in the returned
+// `skipped` slice, so one malformed operator file can never take the whole
+// monitor down. A hard error is returned only if the directory is unreadable or
+// no usable pools are found at all.
+func LoadAllConfigs(dir string) (cfg Config, skipped []string, err error) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
-		return Config{}, fmt.Errorf("failed to read config dir %q: %v", dir, err)
+		return Config{}, nil, fmt.Errorf("failed to read config dir %q: %v", dir, err)
 	}
 
 	// Deterministic operator ordering.
@@ -70,32 +74,34 @@ func LoadAllConfigs(dir string) (Config, error) {
 	merged := Config{}
 	for _, name := range names {
 		path := filepath.Join(dir, name)
-		cfg, err := LoadConfigFromYAML(path)
-		if err != nil {
-			return Config{}, fmt.Errorf("failed to load %q: %v", path, err)
+		fileCfg, ferr := LoadConfigFromYAML(path)
+		if ferr != nil {
+			// Skip and report — never abort the whole monitor for one bad file.
+			skipped = append(skipped, fmt.Sprintf("%s: %v", name, ferr))
+			continue
 		}
 		// A valid operator file must declare at least a blockfrost address.
-		if cfg.BlockFrostAddress == "" && len(cfg.Pools) == 0 {
+		if fileCfg.BlockFrostAddress == "" && len(fileCfg.Pools) == 0 {
 			continue
 		}
 		operator := strings.TrimSuffix(name, filepath.Ext(name))
-		for i := range cfg.Pools {
-			cfg.Pools[i].Operator = operator
-			merged.Pools = append(merged.Pools, cfg.Pools[i])
+		for i := range fileCfg.Pools {
+			fileCfg.Pools[i].Operator = operator
+			merged.Pools = append(merged.Pools, fileCfg.Pools[i])
 		}
-		if merged.BlockFrostAddress == "" && cfg.BlockFrostAddress != "" {
-			merged.BlockFrostAddress = cfg.BlockFrostAddress
+		if merged.BlockFrostAddress == "" && fileCfg.BlockFrostAddress != "" {
+			merged.BlockFrostAddress = fileCfg.BlockFrostAddress
 		}
 	}
 
 	if merged.BlockFrostAddress == "" {
-		return Config{}, fmt.Errorf("no blockfrost_address found in any config under %q", dir)
+		return Config{}, skipped, fmt.Errorf("no blockfrost_address found in any config under %q", dir)
 	}
 	if len(merged.Pools) == 0 {
-		return Config{}, fmt.Errorf("no pools found in any config under %q", dir)
+		return Config{}, skipped, fmt.Errorf("no pools found in any config under %q", dir)
 	}
 
-	return merged, nil
+	return merged, skipped, nil
 }
 
 func (c Config) getPools() []map[string]string {

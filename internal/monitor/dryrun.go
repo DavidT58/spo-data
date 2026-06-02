@@ -45,7 +45,7 @@ func (m *Monitor) DryRun(ctx context.Context) {
 				dry = "never"
 			}
 			if !ba.monitorable {
-				mon = "low"
+				mon = "off" // below floor: block alerts disabled
 			}
 		}
 
@@ -61,7 +61,7 @@ func (m *Monitor) DryRun(ctx context.Context) {
 		}
 
 		flag := ""
-		if berr == nil && ba.inViolation {
+		if berr == nil && ba.inViolation && ba.monitorable {
 			flag = "  <-- BLOCK ALERT"
 		}
 		if kerr == nil && ka.level > 0 {

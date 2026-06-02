@@ -60,6 +60,7 @@ type Settings struct {
 	Floor            time.Duration // never alert faster than this on a dry spell
 	Cap              time.Duration // always alert by this dry spell, regardless of stake
 	K                float64       // adaptive multiplier on expected inter-block gap
+	MinBlocksEpoch   float64       // pools below this expected blocks/epoch get no block alerts
 	KesThresholds    []int         // alert tiers in days, e.g. [14,7,2]
 	Net              NetworkParams
 }
@@ -194,6 +195,7 @@ func LoadSettings() Settings {
 		Floor:            time.Duration(envFloat("MONITOR_FLOOR_HOURS", 24) * float64(time.Hour)),
 		Cap:              time.Duration(envFloat("MONITOR_CAP_HOURS", 336) * float64(time.Hour)),
 		K:                envFloat("MONITOR_K", 3),
+		MinBlocksEpoch:   envFloat("MONITOR_MIN_BLOCKS_EPOCH", 1.0),
 		KesThresholds:    envIntList("MONITOR_KES_THRESHOLDS", []int{14, 7, 2}),
 		Net: NetworkParams{
 			MaxKesEvolutions:  envInt("PRIME_MAX_KES_EVOLUTIONS", 60),

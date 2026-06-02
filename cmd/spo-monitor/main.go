@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"flag"
+	"fmt"
 	"log"
 	"os"
 	"os/signal"
@@ -28,9 +29,12 @@ func main() {
 
 	logger := log.New(os.Stdout, "", log.LstdFlags|log.LUTC)
 
-	cfg, err := configs.LoadAllConfigs(*configDir)
+	cfg, skipped, err := configs.LoadAllConfigs(*configDir)
 	if err != nil {
 		logger.Fatalf("failed to load configs from %q: %v", *configDir, err)
+	}
+	for _, s := range skipped {
+		logger.Printf("warn: skipped unparseable config %s/%s", *configDir, s)
 	}
 	logger.Printf("loaded %d pools across operators from %q (blockfrost: %s)",
 		len(cfg.Pools), *configDir, cfg.BlockFrostAddress)
@@ -73,6 +77,16 @@ func main() {
 
 	if tg == nil {
 		logger.Fatal("TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID must be set to run the monitor (use --dry-run to test without them)")
+	}
+
+	// Surface skipped configs to Telegram so a silent parse error in one
+	// operator file is noticed instead of quietly dropping those pools.
+	if len(skipped) > 0 {
+		msg := fmt.Sprintf("⚠️ spo-monitor started but skipped %d unparseable config file(s):\n%s",
+			len(skipped), strings.Join(skipped, "\n"))
+		if err := tg.Send(msg); err != nil {
+			logger.Printf("warn: failed to send skipped-config warning: %v", err)
+		}
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
