@@ -1,0 +1,30 @@
+# systemd unit for the spo-monitor daemon.
+#
+# Install:
+#   1. Build:   CGO_ENABLED=0 go build -o /opt/spo-data/spo-monitor ./cmd/spo-monitor
+#   2. Copy:    sudo cp deploy/spo-monitor.service /etc/systemd/system/
+#   3. Edit the User=, WorkingDirectory=, ExecStart=, and EnvironmentFile= paths below.
+#   4. Enable:  sudo systemctl daemon-reload && sudo systemctl enable --now spo-monitor
+#   5. Logs:    journalctl -u spo-monitor -f
+
+[Unit]
+Description=Apex Fusion Prime stake-pool monitor (blocks + KES -> Telegram)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=panda
+# WorkingDirectory must contain the c/ config dir and is where data.db is written.
+WorkingDirectory=/opt/spo-data
+EnvironmentFile=/opt/spo-data/.env
+ExecStart=/opt/spo-data/spo-monitor -config-dir c -db data.db
+Restart=always
+RestartSec=10
+# Hardening (relax if it interferes with your filesystem layout).
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=read-only
+
+[Install]
+WantedBy=multi-user.target
