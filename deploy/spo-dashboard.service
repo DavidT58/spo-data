@@ -1,0 +1,31 @@
+# spo-dashboard — leadership-schedule dashboard daemon.
+# Install: copy to /etc/systemd/system/spo-dashboard.service, then
+#   sudo systemctl daemon-reload && sudo systemctl enable --now spo-dashboard
+# The unit is resource-fenced so the per-epoch cardano-cli runs can never starve
+# cardano-node on the shared 2-core/3.7GB host.
+[Unit]
+Description=Apex Fusion Prime block-production dashboard (leadership schedules + reconciliation)
+After=network-online.target cardano-node-prime-mainnet.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=relay
+WorkingDirectory=/opt/spo-data
+EnvironmentFile=/opt/spo-data/.env
+ExecStart=/opt/spo-data/spo-dashboard -config-dir c -db dashboard.db
+Restart=always
+RestartSec=10
+
+# Resource fencing: cli children inherit the cgroup.
+Nice=15
+CPUWeight=30
+IOSchedulingClass=idle
+MemoryHigh=1200M
+
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=read-only
+
+[Install]
+WantedBy=multi-user.target
