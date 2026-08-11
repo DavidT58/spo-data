@@ -93,7 +93,13 @@ A display-only daemon (alerting stays in spo-monitor) that answers precisely:
   Blockfrost, and computation is gated on the node being synced.
 
 The UI (embedded, vanilla JS) serves an overview grouped by operator file plus
-a per-pool drill-down (slot list + epoch history with luck %). The daemon
+a per-pool drill-down (slot list + epoch history with luck %). Each operator
+header and the tile row show the OPERATOR's estimated current-epoch take:
+the pool reward estimate (produced blocks × avg reward per block over the last
+3 completed epochs) fee-adjusted through the pool's registered parameters —
+`min(R, fixed) + margin × max(0, R − fixed)` — priced via the LBank
+`ap3x_usdt` ticker (cached 5 min server-side). Pools at 100% margin therefore
+show the full pool reward. The daemon
 listens on localhost; nginx with basic auth + Cloudflare (Flexible SSL) sits in
 front — see `deploy/nginx-spo-dashboard.conf` and `deploy/cf-ips.sh`.
 

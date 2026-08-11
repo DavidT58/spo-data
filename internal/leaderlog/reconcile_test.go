@@ -566,6 +566,25 @@ func TestRematchSettlesProducedSlot(t *testing.T) {
 	}
 }
 
+func TestOperatorTake(t *testing.T) {
+	cases := []struct {
+		r, margin, fixed, want float64
+	}{
+		{0, 0.05, 200, 0},           // nothing earned
+		{150, 0.05, 200, 150},       // below fixed fee: operator gets it all
+		{200, 0.05, 200, 200},       // exactly the fixed fee
+		{1200, 0.05, 200, 250},      // 200 + 5% of 1000
+		{1200, 1, 200, 1200},        // 100% margin: full pool reward
+		{1200, 0, 200, 200},         // 0% margin: fixed fee only
+		{1200, 0, 0, 0},             // no params known: conservative 0
+	}
+	for _, c := range cases {
+		if got := OperatorTake(c.r, c.margin, c.fixed); got != c.want {
+			t.Errorf("OperatorTake(%v, %v, %v) = %v, want %v", c.r, c.margin, c.fixed, got, c.want)
+		}
+	}
+}
+
 func TestBackfillActualsOnly(t *testing.T) {
 	svc, store, chain, cli := reconcilerFixture(t)
 	chain.history[poolA] = []blockfrost.PoolHistory{

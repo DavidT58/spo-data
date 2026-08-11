@@ -40,6 +40,7 @@ func (s *Service) reconcileTick(ctx context.Context) {
 		}
 	}
 
+	s.ensureRewardEstimates(ctx, tip.Epoch)
 	s.settlePendingSlots(ctx, tip)
 }
 

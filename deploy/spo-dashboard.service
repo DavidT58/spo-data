@@ -13,7 +13,9 @@ Type=simple
 User=relay
 WorkingDirectory=/opt/spo-data
 EnvironmentFile=/opt/spo-data/.env
-ExecStart=/opt/spo-data/spo-dashboard -config-dir c -db dashboard.db
+# dash-config is the dashboard's own pool list (deduplicated per owner);
+# spo-monitor continues to read c/.
+ExecStart=/opt/spo-data/spo-dashboard -config-dir dash-config -db dashboard.db
 Restart=always
 RestartSec=10
 

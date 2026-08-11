@@ -37,8 +37,6 @@ func NewClient() *Client {
 func (c *Client) GetPrice(symbol string) (*PriceResponse, error) {
 	url := fmt.Sprintf("%s/supplement/ticker/price.do?symbol=%s", c.BaseURL, symbol)
 
-	fmt.Println(url)
-
 	resp, err := c.HTTPClient.Get(url)
 	if err != nil {
 		return nil, fmt.Errorf("failed to make request: %w", err)

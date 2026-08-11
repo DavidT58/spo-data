@@ -241,6 +241,15 @@ func (s *Service) computePool(ctx context.Context, pool configs.PoolConfig, tip 
 		fail(SchedKeyStale, fmt.Sprintf("local vrf key %s != on-chain %s", localHash, poolInfo.VrfKey))
 		return
 	}
+	ps.Margin, ps.FixedCostAp3x = feeParams(poolInfo)
+
+	// Best-effort earnings estimate (avg reward per block over recent completed
+	// epochs). Failure is non-fatal — ensureRewardEstimates self-heals later.
+	hctx, hcancel := callCtx(ctx)
+	if hist, herr := s.api.PoolHistory(hctx, pool.PoolID, historyQuery()); herr == nil {
+		ps.RewardPerBlockEst = rewardPerBlockEst(hist, tip.Epoch)
+	}
+	hcancel()
 
 	cliStart := time.Now()
 	entries, err := s.cli.LeadershipSchedule(ctx, pool.PoolID, skeyPath)

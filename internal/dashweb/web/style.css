@@ -69,6 +69,13 @@ h2.operator {
   color: var(--text-secondary);
   margin: 28px 0 8px;
 }
+h2.operator .op-sums {
+  text-transform: none;
+  letter-spacing: normal;
+  font-weight: 400;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
 .tablewrap { overflow-x: auto; }
 table { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; }
 th {

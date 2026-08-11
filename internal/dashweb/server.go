@@ -8,10 +8,13 @@ import (
 	"io/fs"
 	"log"
 	"net/http"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"spo-data/configs"
+	"spo-data/internal/lbank"
 	"spo-data/internal/leaderlog"
 )
 
@@ -27,13 +30,44 @@ type Server struct {
 	set    leaderlog.Settings
 	bfURL  string
 	logger *log.Logger
+
+	lbank     *lbank.Client
+	priceMu   sync.Mutex
+	priceUSDT float64
+	priceAt   time.Time
 }
+
+const priceTTL = 5 * time.Minute
+const priceSymbol = "ap3x_usdt"
 
 func NewServer(store *leaderlog.Store, pools func() []configs.PoolConfig, set leaderlog.Settings, bfURL string, logger *log.Logger) *Server {
 	if logger == nil {
 		logger = log.Default()
 	}
-	return &Server{store: store, pools: pools, set: set, bfURL: bfURL, logger: logger}
+	return &Server{store: store, pools: pools, set: set, bfURL: bfURL, logger: logger, lbank: lbank.NewClient()}
+}
+
+// price returns the cached AP3X/USDT price, refreshing at most every priceTTL.
+// 0 means unavailable (the UI hides USD figures then); a stale cached value is
+// served while LBank is unreachable.
+func (s *Server) price() float64 {
+	s.priceMu.Lock()
+	defer s.priceMu.Unlock()
+	if time.Since(s.priceAt) < priceTTL {
+		return s.priceUSDT
+	}
+	s.priceAt = time.Now() // also on failure: don't hammer LBank on every request
+	resp, err := s.lbank.GetPrice(priceSymbol)
+	if err != nil || !resp.Result || len(resp.Data) == 0 {
+		s.logger.Printf("warn: lbank price fetch failed (keeping %.4f): %v", s.priceUSDT, err)
+		return s.priceUSDT
+	}
+	p, err := strconv.ParseFloat(resp.Data[0].Price, 64)
+	if err != nil || p <= 0 {
+		return s.priceUSDT
+	}
+	s.priceUSDT = p
+	return s.priceUSDT
 }
 
 // Handler returns the http mux: embedded static UI at /, JSON under /api/.
@@ -70,6 +104,9 @@ type overviewPool struct {
 	Pending        int64      `json:"pending"`
 	NextSlotTime   *time.Time `json:"next_slot_time"`
 	Anomalies      *int64     `json:"anomalies"` // nil => "n/a" (schedule not ok)
+	// EstRewards is the OPERATOR's estimated current-epoch take in AP3X:
+	// fee-adjusted (fixed cost + margin) share of produced × avg reward/block.
+	EstRewards float64 `json:"est_rewards"`
 }
 
 type overviewOperator struct {
@@ -87,6 +124,7 @@ type overviewEpoch struct {
 type overviewResponse struct {
 	GeneratedAt time.Time          `json:"generated_at"`
 	Epoch       *overviewEpoch     `json:"epoch"`
+	PriceUSDT   float64            `json:"price_usdt"` // AP3X/USDT; 0 = unavailable
 	Operators   []overviewOperator `json:"operators"`
 }
 
@@ -94,7 +132,7 @@ func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request) {
 	health := leaderlog.GetHealth()
 	epoch := health.CurrentEpoch
 
-	resp := overviewResponse{GeneratedAt: time.Now().UTC()}
+	resp := overviewResponse{GeneratedAt: time.Now().UTC(), PriceUSDT: s.price()}
 	if info, found, err := s.store.GetEpochInfo(epoch); err == nil && found {
 		pct := 0.0
 		total := info.EndTime.Sub(info.StartTime).Seconds()
@@ -121,8 +159,12 @@ func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request) {
 		}
 
 		row := overviewPool{PoolID: pool.PoolID, Name: pool.Name, ScheduleStatus: leaderlog.SchedPending}
+		var rewardPerBlock, margin, fixedCost float64
 		if ps, found, err := s.store.GetPoolSchedule(pool.PoolID, epoch); err == nil && found {
 			row.ScheduleStatus = ps.Status
+			rewardPerBlock = ps.RewardPerBlockEst
+			margin = ps.Margin
+			fixedCost = ps.FixedCostAp3x
 		}
 		if counts, err := s.store.CountSlots(pool.PoolID, epoch); err == nil {
 			row.Scheduled = counts.Scheduled
@@ -130,6 +172,7 @@ func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request) {
 			row.Missed = counts.Missed
 			row.Pending = counts.Pending
 		}
+		row.EstRewards = leaderlog.OperatorTake(float64(row.Produced)*rewardPerBlock, margin, fixedCost)
 		if next, found, err := s.store.NextPendingSlotAfter(pool.PoolID, health.TipSlot); err == nil && found {
 			t := next.SlotTime
 			row.NextSlotTime = &t

@@ -39,6 +39,15 @@ type PoolSchedule struct {
 	VRFHashLocal  string
 	VRFHashChain  string
 	Error         string
+	// RewardPerBlockEst is the pool's average reward per minted block in AP3X,
+	// averaged over recent completed epochs (Blockfrost pool history). Used to
+	// estimate current-epoch earnings: produced × RewardPerBlockEst.
+	RewardPerBlockEst float64
+	// Margin and FixedCostAp3x are the pool's registered fee parameters,
+	// captured alongside the reward estimate. The operator's take of a total
+	// epoch reward R is: R if R <= fixed, else fixed + margin × (R − fixed).
+	Margin        float64
+	FixedCostAp3x float64
 }
 
 // Slot settlement status.

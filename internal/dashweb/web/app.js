@@ -69,7 +69,14 @@ async function fetchJSON(path) {
 
 // --- overview ---
 
-function renderTiles(epoch, totals) {
+function fmtAp3x(n) {
+  return n.toLocaleString("en-US", { maximumFractionDigits: n >= 100 ? 0 : 1 });
+}
+function fmtUsd(n) {
+  return "$" + n.toLocaleString("en-US", { maximumFractionDigits: n >= 100 ? 0 : 2 });
+}
+
+function renderTiles(epoch, totals, price) {
   $tiles.replaceChildren();
   if (!epoch) return;
   const tiles = [
@@ -79,6 +86,12 @@ function renderTiles(epoch, totals) {
     ["Missed", totals.missed, ""],
     ["Upcoming", totals.pending, ""],
   ];
+  if (totals.est > 0) {
+    tiles.push(["Est. earned", `${fmtAp3x(totals.est)} AP3X`, price > 0 ? fmtUsd(totals.est * price) : ""]);
+  }
+  if (price > 0) {
+    tiles.push(["AP3X", `$${price}`, ""]);
+  }
   for (const [label, value, extra] of tiles) {
     const v = el("div", { class: "value" }, String(value));
     if (extra) v.append(" ", el("small", {}, extra));
@@ -115,13 +128,15 @@ function poolRow(p) {
 
 async function buildOverview() {
   const data = await fetchJSON("/api/overview");
-  const totals = { scheduled: 0, produced: 0, missed: 0, pending: 0 };
+  const price = data.price_usdt || 0;
+  const totals = { scheduled: 0, produced: 0, missed: 0, pending: 0, est: 0 };
   for (const op of data.operators || []) {
     for (const p of op.pools) {
       totals.scheduled += p.scheduled;
       totals.produced += p.produced;
       totals.missed += p.missed;
       totals.pending += p.pending;
+      totals.est += p.est_rewards || 0;
     }
   }
 
@@ -131,7 +146,17 @@ async function buildOverview() {
       `Epoch ${data.epoch.number}: ${fmtUTC(data.epoch.start_time)} → ${fmtUTC(data.epoch.end_time)}`));
   }
   for (const op of data.operators || []) {
-    frag.append(el("h2", { class: "operator" }, op.name));
+    const opScheduled = op.pools.reduce((n, p) => n + p.scheduled, 0);
+    const opProduced = op.pools.reduce((n, p) => n + p.produced, 0);
+    const opEst = op.pools.reduce((n, p) => n + (p.est_rewards || 0), 0);
+    let sums = `${opScheduled} scheduled · ${opProduced} produced`;
+    if (opEst > 0) {
+      sums += ` · ≈${fmtAp3x(opEst)} AP3X`;
+      if (price > 0) sums += ` (${fmtUsd(opEst * price)})`;
+    }
+    frag.append(el("h2", { class: "operator" },
+      op.name, " ",
+      el("span", { class: "op-sums" }, sums)));
     const tbody = el("tbody", {}, op.pools.map(poolRow));
     frag.append(el("div", { class: "tablewrap" },
       el("table", {},
@@ -143,7 +168,7 @@ async function buildOverview() {
         )),
         tbody)));
   }
-  return { apply() { renderTiles(data.epoch, totals); $view.replaceChildren(frag); } };
+  return { apply() { renderTiles(data.epoch, totals, price); $view.replaceChildren(frag); } };
 }
 
 // --- pool detail ---
