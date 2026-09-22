@@ -17,6 +17,7 @@ type Client struct {
 	ChatID     string
 	BaseURL    string
 	HTTPClient *http.Client
+	QuietHours *QuietHours
 }
 
 // NewClient initializes a Telegram client for a single bot token + chat ID.
@@ -38,9 +39,13 @@ type sendResponse struct {
 }
 
 // Send delivers a Markdown-formatted message to the configured chat. It returns
-// an error on transport or API failure; callers should log and continue rather
-// than crash the daemon.
+// ErrQuietHours without sending during quiet hours, or an error on transport
+// or API failure.
 func (c *Client) Send(text string) error {
+	if c.QuietHours.Active(time.Now()) {
+		return ErrQuietHours
+	}
+
 	endpoint := fmt.Sprintf("%s/bot%s/sendMessage", c.BaseURL, c.Token)
 
 	form := url.Values{}

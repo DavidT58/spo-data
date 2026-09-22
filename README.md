@@ -43,6 +43,19 @@ and is used directly.
 Copy `.env.example` to `.env` and set `TELEGRAM_BOT_TOKEN` + `TELEGRAM_CHAT_ID`.
 All other settings have sensible defaults (see `.env.example`).
 
+The sample enables daily Telegram quiet hours from **00:00 to 08:00 in
+Europe/Belgrade**, including daylight-saving changes. Set `MONITOR_QUIET_START`,
+`MONITOR_QUIET_END` (both `HH:MM`), and `MONITOR_QUIET_TIMEZONE` to change this.
+Leave both times unset to disable quiet hours. An unset time zone uses the
+server's local zone, so set it explicitly when the server uses UTC.
+
+No Telegram messages are sent during this window, including reminders,
+recoveries, startup warnings, and `--test-alert`. Monitoring continues.
+Deferred pool alerts do not advance their notification state. The next normal
+poll outside quiet hours reassesses the condition; it does not replay stale
+overnight incidents. This is not a scheduled 08:00 delivery: block checks run
+every 10 minutes and KES checks every 12 hours by default.
+
 ### Build & run
 
 ```bash

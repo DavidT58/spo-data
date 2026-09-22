@@ -51,9 +51,20 @@ func main() {
 	// for --dry-run (which never sends).
 	token := strings.TrimSpace(os.Getenv("TELEGRAM_BOT_TOKEN"))
 	chatID := strings.TrimSpace(os.Getenv("TELEGRAM_CHAT_ID"))
+	quietZone := envOr("MONITOR_QUIET_TIMEZONE", "Local")
+	quietStart := strings.TrimSpace(os.Getenv("MONITOR_QUIET_START"))
+	quietEnd := strings.TrimSpace(os.Getenv("MONITOR_QUIET_END"))
+	quietHours, err := telegram.NewQuietHours(quietStart, quietEnd, quietZone)
+	if err != nil {
+		logger.Fatalf("invalid quiet-hours configuration: %v", err)
+	}
+	if quietHours != nil {
+		logger.Printf("telegram quiet hours: %s-%s (%s)", quietStart, quietEnd, quietZone)
+	}
 	var tg *telegram.Client
 	if token != "" && chatID != "" {
 		tg = telegram.NewClient(token, chatID)
+		tg.QuietHours = quietHours
 	}
 
 	if *testAlert {

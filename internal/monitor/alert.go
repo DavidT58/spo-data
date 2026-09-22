@@ -1,24 +1,30 @@
 package monitor
 
 import (
+	"errors"
 	"fmt"
 	"time"
 
 	"spo-data/internal/database"
 	"spo-data/internal/models"
+	"spo-data/internal/telegram"
 )
 
-// notify logs the message and, when a Telegram client is configured, sends it.
-// Send failures are logged but never propagated — a missed send is retried on
-// the next cycle by the state machine.
-func (m *Monitor) notify(msg string) {
+// notify returns false if delivery is deferred or fails, so the state machine
+// can reassess the condition on the next cycle without marking it as sent.
+func (m *Monitor) notify(msg string) bool {
+	if m.tg != nil {
+		if err := m.tg.Send(msg); err != nil {
+			if errors.Is(err, telegram.ErrQuietHours) {
+				m.logger.Printf("DEFERRED (quiet hours) %s", msg)
+			} else {
+				m.logger.Printf("warn: telegram send failed: %v", err)
+			}
+			return false
+		}
+	}
 	m.logger.Printf("ALERT %s", msg)
-	if m.tg == nil {
-		return
-	}
-	if err := m.tg.Send(msg); err != nil {
-		m.logger.Printf("warn: telegram send failed: %v", err)
-	}
+	return true
 }
 
 // loadAlertState returns the stored state for (poolID, alertType), or a fresh
@@ -51,19 +57,25 @@ func (m *Monitor) evaluateWithReminder(poolID, operator, ticker string, inViolat
 
 	switch {
 	case inViolation && state.Status != models.StatusAlerting:
+		if !m.notify(alertMsg) {
+			return
+		}
 		state.Status = models.StatusAlerting
 		state.FirstAlertedAt = now
 		state.LastReminderAt = now
-		m.notify(alertMsg)
 	case inViolation && state.Status == models.StatusAlerting:
 		if now.Sub(state.LastReminderAt) >= m.set.ReminderInterval {
+			if !m.notify(reminderMsg) {
+				return
+			}
 			state.LastReminderAt = now
-			m.notify(reminderMsg)
 		}
 	case !inViolation && state.Status == models.StatusAlerting:
+		if !m.notify(recoveryMsg) {
+			return
+		}
 		state.Status = models.StatusOK
 		state.NotifiedLevel = 0
-		m.notify(recoveryMsg)
 	}
 
 	m.saveAlertState(&state)
@@ -79,19 +91,25 @@ func (m *Monitor) evaluateTiered(poolID, operator, ticker string, level int, ale
 
 	switch {
 	case level <= 0 && state.Status == models.StatusAlerting:
+		if !m.notify(recoveryMsg) {
+			return
+		}
 		state.Status = models.StatusOK
 		state.NotifiedLevel = 0
-		m.notify(recoveryMsg)
 	case level > 0 && state.Status != models.StatusAlerting:
+		if !m.notify(alertMsg) {
+			return
+		}
 		state.Status = models.StatusAlerting
 		state.FirstAlertedAt = now
 		state.LastReminderAt = now
 		state.NotifiedLevel = level
-		m.notify(alertMsg)
 	case level > 0 && state.Status == models.StatusAlerting && level > state.NotifiedLevel:
+		if !m.notify(alertMsg) {
+			return
+		}
 		state.NotifiedLevel = level
 		state.LastReminderAt = now
-		m.notify(alertMsg)
 	}
 
 	m.saveAlertState(&state)
