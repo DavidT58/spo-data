@@ -71,8 +71,13 @@ func (m *Monitor) assessBlock(ctx context.Context, pool configs.PoolConfig, d fl
 	return a, nil
 }
 
-// checkBlocks runs the adaptive block-production check across all pools.
+// checkBlocks runs the adaptive block-production check across all pools. The
+// pass's notifications go out together when it ends, also when ctx ends it
+// early.
 func (m *Monitor) checkBlocks(ctx context.Context, firstPass bool) {
+	var batch alertBatch
+	defer m.flush(&batch)
+
 	cctx, cancel := callCtx(ctx)
 	d := m.decentralisation(cctx)
 	cancel()
@@ -116,6 +121,6 @@ func (m *Monitor) checkBlocks(ctx context.Context, firstPass bool) {
 		recoveryMsg := fmt.Sprintf("✅ *%s* (%s) — producing again (last block %s ago)",
 			pool.Name, pool.Operator, fmtDuration(a.dry))
 
-		m.evaluateWithReminder(pool.PoolID, pool.Operator, pool.Name, a.inViolation, alertMsg, reminderMsg, recoveryMsg)
+		m.evaluateWithReminder(&batch, pool.PoolID, pool.Operator, pool.Name, a.inViolation, alertMsg, reminderMsg, recoveryMsg)
 	}
 }

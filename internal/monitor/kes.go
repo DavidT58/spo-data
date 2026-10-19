@@ -136,8 +136,12 @@ func tierLevel(daysLeft float64, thresholds []int) int {
 	return level
 }
 
-// checkKES runs the KES expiry heuristic across all pools.
+// checkKES runs the KES expiry heuristic across all pools. The pass's
+// notifications go out together when it ends, also when ctx ends it early.
 func (m *Monitor) checkKES(ctx context.Context, firstPass bool) {
+	var batch alertBatch
+	defer m.flush(&batch)
+
 	for _, pool := range m.cfg.Pools {
 		select {
 		case <-ctx.Done():
@@ -164,7 +168,7 @@ func (m *Monitor) checkKES(ctx context.Context, firstPass bool) {
 		}
 
 		alertMsg, recoveryMsg := kesMessages(pool, a)
-		m.evaluateTiered(pool.PoolID, pool.Operator, pool.Name, a.level, alertMsg, recoveryMsg)
+		m.evaluateTiered(&batch, pool.PoolID, pool.Operator, pool.Name, a.level, alertMsg, recoveryMsg)
 	}
 }
 

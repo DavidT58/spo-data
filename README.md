@@ -29,6 +29,17 @@ Alerts use a per-`(pool, type)` state machine in SQLite: one alert on entering
 the condition, reminders (block) or tier escalations (KES) while it persists,
 and a recovery message when it clears.
 
+Each check pass (one block pass or one KES pass) sends its notifications as
+one Telegram message. A single notification goes out unchanged. Two or more
+get a bold count header (for example `*12 alerts*`), followed by each alert
+text in pass order, separated by blank lines. A message that would exceed
+Telegram's 4096-character limit is split between alerts into consecutive
+messages (`*40 alerts (1/2)*`, `*40 alerts (2/2)*`); one alert text is never
+split. A pool's alert state advances only when the message that carries its
+text is delivered. A failed or deferred message leaves those pools unchanged,
+so the next pass reassesses them. A pool that is listed under more than one
+operator gets one notification per pass.
+
 ### Important: Prime network constants
 
 The Blockfrost `/genesis` endpoint on this backend returns **Cardano-mainnet**
