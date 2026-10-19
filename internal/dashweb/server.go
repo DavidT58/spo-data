@@ -104,8 +104,10 @@ type overviewPool struct {
 	Pending        int64      `json:"pending"`
 	NextSlotTime   *time.Time `json:"next_slot_time"`
 	Anomalies      *int64     `json:"anomalies"` // nil => "n/a" (schedule not ok)
-	// EstRewards is the OPERATOR's estimated current-epoch take in AP3X:
-	// fee-adjusted (fixed cost + margin) share of produced × avg reward/block.
+	// EstRewards is the pool OWNER's estimated current-epoch take in AP3X:
+	// produced × avg reward/block, split by the fee parameters the ledger
+	// applies this epoch (fixed cost + margin) plus the member rewards on the
+	// stake the owner controls. Foundation/other delegators' parts excluded.
 	EstRewards float64 `json:"est_rewards"`
 }
 
@@ -159,12 +161,10 @@ func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request) {
 		}
 
 		row := overviewPool{PoolID: pool.PoolID, Name: pool.Name, ScheduleStatus: leaderlog.SchedPending}
-		var rewardPerBlock, margin, fixedCost float64
+		var rewardPerBlock float64
 		if ps, found, err := s.store.GetPoolSchedule(pool.PoolID, epoch); err == nil && found {
 			row.ScheduleStatus = ps.Status
 			rewardPerBlock = ps.RewardPerBlockEst
-			margin = ps.Margin
-			fixedCost = ps.FixedCostAp3x
 		}
 		if counts, err := s.store.CountSlots(pool.PoolID, epoch); err == nil {
 			row.Scheduled = counts.Scheduled
@@ -172,7 +172,15 @@ func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request) {
 			row.Missed = counts.Missed
 			row.Pending = counts.Pending
 		}
-		row.EstRewards = leaderlog.OperatorTake(float64(row.Produced)*rewardPerBlock, margin, fixedCost)
+		margin, fixedCost, err := s.store.EffectiveFeeParams(pool.PoolID, epoch)
+		if err != nil {
+			s.logger.Printf("warn: fee params for %s: %v", pool.Name, err)
+		}
+		ownedShare := 0.0
+		if stakes, err := s.store.EpochStakes(pool.PoolID, epoch); err == nil {
+			ownedShare = leaderlog.OwnedStakeShare(stakes, pool.OwnStake)
+		}
+		row.EstRewards = leaderlog.OwnerTake(float64(row.Produced)*rewardPerBlock, margin, fixedCost, ownedShare)
 		if next, found, err := s.store.NextPendingSlotAfter(pool.PoolID, health.TipSlot); err == nil && found {
 			t := next.SlotTime
 			row.NextSlotTime = &t

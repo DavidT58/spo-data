@@ -44,8 +44,9 @@ type PoolSchedule struct {
 	// estimate current-epoch earnings: produced × RewardPerBlockEst.
 	RewardPerBlockEst float64
 	// Margin and FixedCostAp3x are the pool's registered fee parameters,
-	// captured alongside the reward estimate. The operator's take of a total
-	// epoch reward R is: R if R <= fixed, else fixed + margin × (R − fixed).
+	// captured alongside the reward estimate. The ledger applies them to the
+	// rewards of epoch+2 (see EffectiveFeeParams). The operator's fee from a
+	// total epoch reward R is: R if R <= fixed, else fixed + margin × (R − fixed).
 	Margin        float64
 	FixedCostAp3x float64
 }
@@ -98,4 +99,17 @@ type EpochSummary struct {
 	ExpectedBlocks float64
 	ActualsOnly    bool
 	Finalized      bool
+}
+
+// EpochStake is one delegator's active stake in a pool for one epoch: the
+// snapshot the ledger pays that epoch's rewards on (Blockfrost
+// /epochs/{n}/stakes/{pool}). PoolOwner marks the pool's registered owner and
+// reward accounts, whose rewards always go to the pool's owner.
+type EpochStake struct {
+	ID           uint   `gorm:"primarykey"`
+	PoolID       string `gorm:"index:idx_epoch_stake,unique"`
+	Epoch        int    `gorm:"index:idx_epoch_stake,unique"`
+	StakeAddress string `gorm:"index:idx_epoch_stake,unique"`
+	Lovelace     int64
+	PoolOwner    bool
 }

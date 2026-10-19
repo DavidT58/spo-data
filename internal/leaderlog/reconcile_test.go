@@ -26,6 +26,8 @@ type stubChain struct {
 	slotErr    map[int]error                // slot -> forced error
 	latest     blockfrost.Block             // Blockfrost's own indexed tip
 	poolErr    error
+	stakes     map[string][]blockfrost.EpochStakeByPool // key "epoch/pool"
+	stakesErr  error
 }
 
 func (s *stubChain) BlockLatest(_ context.Context) (blockfrost.Block, error) {
@@ -44,6 +46,21 @@ func (s *stubChain) PoolHistory(_ context.Context, id string, _ blockfrost.APIQu
 func (s *stubChain) EpochBlockDistributionByPool(_ context.Context, epoch int, id string, q blockfrost.APIQueryParams) ([]string, error) {
 	all := s.epochHash[fmt.Sprintf("%d/%s", epoch, id)]
 	// crude paging
+	start := (q.Page - 1) * q.Count
+	if start >= len(all) {
+		return nil, nil
+	}
+	end := start + q.Count
+	if end > len(all) {
+		end = len(all)
+	}
+	return all[start:end], nil
+}
+func (s *stubChain) EpochStakeDistributionByPool(_ context.Context, epoch int, id string, q blockfrost.APIQueryParams) ([]blockfrost.EpochStakeByPool, error) {
+	if s.stakesErr != nil {
+		return nil, s.stakesErr
+	}
+	all := s.stakes[fmt.Sprintf("%d/%s", epoch, id)]
 	start := (q.Page - 1) * q.Count
 	if start >= len(all) {
 		return nil, nil
@@ -566,22 +583,83 @@ func TestRematchSettlesProducedSlot(t *testing.T) {
 	}
 }
 
-func TestOperatorTake(t *testing.T) {
+func TestOwnerTake(t *testing.T) {
 	cases := []struct {
-		r, margin, fixed, want float64
+		r, margin, fixed, share, want float64
 	}{
-		{0, 0.05, 200, 0},           // nothing earned
-		{150, 0.05, 200, 150},       // below fixed fee: operator gets it all
-		{200, 0.05, 200, 200},       // exactly the fixed fee
-		{1200, 0.05, 200, 250},      // 200 + 5% of 1000
-		{1200, 1, 200, 1200},        // 100% margin: full pool reward
-		{1200, 0, 200, 200},         // 0% margin: fixed fee only
-		{1200, 0, 0, 0},             // no params known: conservative 0
+		{0, 0.05, 200, 0.5, 0},      // nothing earned
+		{150, 0.05, 200, 0, 150},    // below fixed fee: operator gets it all
+		{200, 0.05, 200, 0, 200},    // exactly the fixed fee
+		{1200, 0.05, 200, 0, 250},   // no owned stake: 200 + 5% of 1000
+		{1200, 0.05, 200, 0.5, 725}, // + half of the 950 left for members
+		{1200, 0.05, 200, 1, 1200},  // owner holds all stake: everything
+		{1200, 1, 200, 0, 1200},     // 100% margin: full pool reward
+		{1200, 0, 200, 0, 200},      // 0% margin: fixed fee only
+		{1200, 0, 0, 0.25, 300},     // no params known: owned share only
 	}
 	for _, c := range cases {
-		if got := OperatorTake(c.r, c.margin, c.fixed); got != c.want {
-			t.Errorf("OperatorTake(%v, %v, %v) = %v, want %v", c.r, c.margin, c.fixed, got, c.want)
+		if got := OwnerTake(c.r, c.margin, c.fixed, c.share); got != c.want {
+			t.Errorf("OwnerTake(%v, %v, %v, %v) = %v, want %v", c.r, c.margin, c.fixed, c.share, got, c.want)
 		}
+	}
+}
+
+func TestStakeSnapshotOwnedShare(t *testing.T) {
+	svc, store, chain, _ := reconcilerFixture(t)
+	key := fmt.Sprintf("%d/%s", testEpoch, poolA)
+	// 150 delegators (two pages): the registered owner (1 AP3X), the
+	// operator's own wallet (3 AP3X) and 148 others (0.1 AP3X each).
+	chain.stakes = map[string][]blockfrost.EpochStakeByPool{key: {
+		{StakeAddress: "stake_owner", Amount: "1000000"},
+		{StakeAddress: "stake_own_wallet", Amount: "3000000"},
+	}}
+	for i := range 148 {
+		chain.stakes[key] = append(chain.stakes[key], blockfrost.EpochStakeByPool{StakeAddress: fmt.Sprintf("stake_other_%d", i), Amount: "100000"})
+	}
+	chain.pools[poolA] = blockfrost.Pool{RewardAccount: "stake_owner", Owners: []string{"stake_owner"}}
+
+	chain.stakesErr = fmt.Errorf("connection refused")
+	svc.reconcileTick(context.Background())
+	if has, _ := store.HasEpochStakes(poolA, testEpoch); has {
+		t.Fatal("snapshot stored despite a failed lookup")
+	}
+
+	chain.stakesErr = nil
+	svc.reconcileTick(context.Background())
+	stakes, err := store.EpochStakes(poolA, testEpoch)
+	if err != nil || len(stakes) != 150 {
+		t.Fatalf("stored %d stake rows (err %v), want 150", len(stakes), err)
+	}
+	near := func(got, want float64) bool { return got > want-1e-9 && got < want+1e-9 }
+	if got, want := OwnedStakeShare(stakes, []string{"stake_own_wallet"}), 4.0/18.8; !near(got, want) {
+		t.Fatalf("owned share = %v, want %v", got, want)
+	}
+	if got, want := OwnedStakeShare(stakes, nil), 1.0/18.8; !near(got, want) {
+		t.Fatalf("registered-owner-only share = %v, want %v", got, want)
+	}
+}
+
+func TestEffectiveFeeParamsLagTwoEpochs(t *testing.T) {
+	_, store, _, _ := reconcilerFixture(t)
+	// Re-registered from 100% to 5% during epoch testEpoch-3: the rows from
+	// testEpoch-2 on captured 5%, the ledger applies it from testEpoch on.
+	for e, m := range map[int]float64{testEpoch - 3: 1, testEpoch - 2: 0.05, testEpoch - 1: 0.05, testEpoch: 0.05} {
+		if err := store.SavePoolSchedule(&PoolSchedule{PoolID: poolA, Epoch: e, Margin: m, FixedCostAp3x: 200}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if m, _, _ := store.EffectiveFeeParams(poolA, testEpoch-1); m != 1 {
+		t.Errorf("epoch-1 margin = %v, want 1 (old parameters still apply)", m)
+	}
+	if m, _, _ := store.EffectiveFeeParams(poolA, testEpoch); m != 0.05 {
+		t.Errorf("epoch margin = %v, want 0.05", m)
+	}
+	// A pool tracked for one epoch only falls back to its own row.
+	if err := store.SavePoolSchedule(&PoolSchedule{PoolID: "pool1new", Epoch: testEpoch, Margin: 0.05, FixedCostAp3x: 200}); err != nil {
+		t.Fatal(err)
+	}
+	if m, f, _ := store.EffectiveFeeParams("pool1new", testEpoch); m != 0.05 || f != 200 {
+		t.Errorf("new pool params = %v/%v, want 0.05/200", m, f)
 	}
 }
 

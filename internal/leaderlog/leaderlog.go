@@ -24,6 +24,7 @@ type chainAPI interface {
 	Pool(ctx context.Context, poolID string) (blockfrost.Pool, error)
 	PoolHistory(ctx context.Context, poolID string, query blockfrost.APIQueryParams) ([]blockfrost.PoolHistory, error)
 	EpochBlockDistributionByPool(ctx context.Context, epochNumber int, poolID string, query blockfrost.APIQueryParams) ([]string, error)
+	EpochStakeDistributionByPool(ctx context.Context, epochNumber int, poolID string, query blockfrost.APIQueryParams) ([]blockfrost.EpochStakeByPool, error)
 	Block(ctx context.Context, hashOrNumber string) (blockfrost.Block, error)
 	BlockBySlot(ctx context.Context, slotNumber int) (blockfrost.Block, error)
 	BlockLatest(ctx context.Context) (blockfrost.Block, error)

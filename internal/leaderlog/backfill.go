@@ -31,6 +31,37 @@ func OperatorTake(r, margin, fixedAp3x float64) float64 {
 	return fixedAp3x + margin*(r-fixedAp3x)
 }
 
+// OwnerTake is the pool owner's part of a total epoch reward R: the operator
+// fee (OperatorTake) plus the member rewards on the owned share of the pool's
+// stake. The ledger pays members (R − fee) pro rata on the epoch's stake
+// snapshot; registered owners get their pro-rata part inside the leader
+// reward, so the same split covers both.
+func OwnerTake(r, margin, fixedAp3x, ownedShare float64) float64 {
+	fee := OperatorTake(r, margin, fixedAp3x)
+	return fee + (r-fee)*ownedShare
+}
+
+// OwnedStakeShare is the fraction of a pool's epoch stake snapshot that its
+// owner controls: the registered owner/reward accounts plus the operator's
+// own_stake addresses. 0 for an empty snapshot.
+func OwnedStakeShare(stakes []EpochStake, ownStake []string) float64 {
+	own := make(map[string]bool, len(ownStake))
+	for _, a := range ownStake {
+		own[a] = true
+	}
+	var total, owned int64
+	for _, st := range stakes {
+		total += st.Lovelace
+		if st.PoolOwner || own[st.StakeAddress] {
+			owned += st.Lovelace
+		}
+	}
+	if total <= 0 {
+		return 0
+	}
+	return float64(owned) / float64(total)
+}
+
 // rewardPerBlockEst averages a pool's reward per minted block (in AP3X, i.e.
 // the 1e-6 base-unit strings from Blockfrost divided out) over its most recent
 // completed epochs that actually produced blocks. 0 when no usable history.
@@ -102,6 +133,66 @@ func (s *Service) ensureRewardEstimates(ctx context.Context, currentEpoch int) {
 			if err := s.store.SavePoolSchedule(&ps); err != nil {
 				s.logger.Printf("warn: failed to save reward estimate for %s: %v", pool.Name, err)
 			}
+		}
+	}
+}
+
+// ensureStakeSnapshots stores each pool's active-stake snapshot for the epoch
+// (per delegator, registered owner/reward accounts flagged) once. Two
+// Blockfrost lookups per pool per epoch; failures retry on the next tick.
+func (s *Service) ensureStakeSnapshots(ctx context.Context, epoch int) {
+	for _, pool := range s.Pools() {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+		if has, err := s.store.HasEpochStakes(pool.PoolID, epoch); err != nil || has {
+			continue
+		}
+		cctx, cancel := callCtx(ctx)
+		info, err := s.api.Pool(cctx, pool.PoolID)
+		cancel()
+		if err != nil {
+			s.logger.Printf("warn: pool lookup for stake snapshot of %s failed: %v", pool.Name, err)
+			continue
+		}
+		owners := map[string]bool{info.RewardAccount: true}
+		for _, o := range info.Owners {
+			owners[o] = true
+		}
+		var rows []EpochStake
+		failed := false
+		for page := 1; ; page++ {
+			cctx, cancel := callCtx(ctx)
+			chunk, err := s.api.EpochStakeDistributionByPool(cctx, epoch, pool.PoolID, blockfrost.APIQueryParams{Count: 100, Page: page})
+			cancel()
+			if err != nil {
+				s.logger.Printf("warn: epoch %d stake snapshot for %s failed: %v", epoch, pool.Name, err)
+				failed = true
+				break
+			}
+			for _, c := range chunk {
+				amount, err := strconv.ParseInt(c.Amount, 10, 64)
+				if err != nil {
+					s.logger.Printf("warn: bad stake amount %q for %s in %s", c.Amount, c.StakeAddress, pool.Name)
+					failed = true
+					break
+				}
+				rows = append(rows, EpochStake{
+					PoolID: pool.PoolID, Epoch: epoch, StakeAddress: c.StakeAddress,
+					Lovelace: amount, PoolOwner: owners[c.StakeAddress],
+				})
+			}
+			if failed || len(chunk) < 100 {
+				break
+			}
+		}
+		if failed || len(rows) == 0 {
+			continue
+		}
+		if err := s.store.ReplaceEpochStakes(pool.PoolID, epoch, rows); err != nil {
+			s.logger.Printf("warn: failed to save stake snapshot for %s: %v", pool.Name, err)
 		}
 	}
 }

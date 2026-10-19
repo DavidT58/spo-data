@@ -16,11 +16,18 @@ type PoolConfig struct {
 	// Operator is not read from YAML; it is set to the config filename at load
 	// time so alerts can be attributed to the operator who owns the pool.
 	Operator string `json:"operator" yaml:"-"`
+	// OwnStake is not read per pool; it is the operator file's own_stake list,
+	// copied onto each of the file's pools at load time.
+	OwnStake []string `json:"-" yaml:"-"`
 }
 
 type Config struct {
 	Pools             []PoolConfig `json:"pools"`
 	BlockFrostAddress string       `json:"blockfrost_address" yaml:"blockfrost_address"`
+	// OwnStake lists the stake addresses whose delegation rewards belong to
+	// the file's operator (spo-dashboard earnings). Each pool's registered
+	// owner and reward accounts count without being listed.
+	OwnStake []string `json:"own_stake" yaml:"own_stake"`
 }
 
 func LoadConfigFromYAML(filePath string) (Config, error) {
@@ -87,6 +94,7 @@ func LoadAllConfigs(dir string) (cfg Config, skipped []string, err error) {
 		operator := strings.TrimSuffix(name, filepath.Ext(name))
 		for i := range fileCfg.Pools {
 			fileCfg.Pools[i].Operator = operator
+			fileCfg.Pools[i].OwnStake = fileCfg.OwnStake
 			merged.Pools = append(merged.Pools, fileCfg.Pools[i])
 		}
 		if merged.BlockFrostAddress == "" && fileCfg.BlockFrostAddress != "" {

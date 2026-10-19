@@ -118,14 +118,31 @@ A display-only daemon (alerting stays in spo-monitor) that answers precisely:
 
 The UI (embedded, vanilla JS) serves an overview grouped by operator file plus
 a per-pool drill-down (slot list + epoch history with luck %). Each operator
-header and the tile row show the OPERATOR's estimated current-epoch take:
-the pool reward estimate (produced blocks × avg reward per block over the last
-3 completed epochs) fee-adjusted through the pool's registered parameters —
-`min(R, fixed) + margin × max(0, R − fixed)` — priced via the LBank
-`ap3x_usdt` ticker (cached 5 min server-side). Pools at 100% margin therefore
-show the full pool reward. The daemon
-listens on localhost; nginx with basic auth + Cloudflare (Flexible SSL) sits in
-front — see `deploy/nginx-spo-dashboard.conf` and `deploy/cf-ips.sh`.
+header and the tile row show what the pool OWNERS get this epoch (estimate):
+
+- Pool reward `R` = produced blocks × avg reward per block over the last 3
+  completed epochs.
+- Operator fee = `min(R, fixed) + margin × max(0, R − fixed)`, with the fee
+  parameters the ledger applies to this epoch. A re-registration in epoch N
+  first applies to the rewards of epoch N+3, so the dashboard uses the
+  parameters it captured 2 epochs earlier.
+- Owner take = fee + `(R − fee) × owned stake / pool stake`, on the epoch's
+  active-stake snapshot (Blockfrost `/epochs/{n}/stakes/{pool}`, stored once
+  per pool per epoch). Owned stake = the pool's registered owner and reward
+  accounts plus the stake addresses in the operator file's `own_stake` list.
+  All other delegators (foundation, other people) are excluded. A listed
+  address counts only in that operator's own pools.
+
+```yaml
+own_stake:
+  - stake1u... # wallet whose rewards are this owner's money
+pools:
+  - name: ...
+```
+
+Prices come from the LBank `ap3x_usdt` ticker (cached 5 min server-side). The
+daemon listens on localhost; nginx with basic auth + Cloudflare (Flexible SSL)
+sits in front — see `deploy/nginx-spo-dashboard.conf` and `deploy/cf-ips.sh`.
 
 ```bash
 CGO_ENABLED=0 go build -o spo-dashboard ./cmd/spo-dashboard

@@ -41,7 +41,7 @@ func OpenStore(path string) (*Store, error) {
 	}
 	sqlDB.SetMaxOpenConns(1)
 
-	if err := db.AutoMigrate(&EpochInfo{}, &PoolSchedule{}, &ScheduledSlot{}, &ObservedBlock{}, &EpochSummary{}); err != nil {
+	if err := db.AutoMigrate(&EpochInfo{}, &PoolSchedule{}, &ScheduledSlot{}, &ObservedBlock{}, &EpochSummary{}, &EpochStake{}); err != nil {
 		return nil, err
 	}
 	return &Store{db: db}, nil
@@ -80,6 +80,58 @@ func (s *Store) SavePoolSchedule(ps *PoolSchedule) error {
 func (s *Store) PoolSchedulesForEpoch(epoch int) ([]PoolSchedule, error) {
 	var out []PoolSchedule
 	err := s.db.Where("epoch = ?", epoch).Find(&out).Error
+	return out, err
+}
+
+// feeParamLag: a pool re-registration submitted in epoch N first applies to
+// the rewards of epoch N+3, because the stake snapshot for epoch E (which
+// carries the pool parameters) is taken at the end of E−2, before that
+// boundary adopts newly registered parameters. Each schedule row captured the
+// parameters registered when its epoch began, so the row of epoch E−2 holds
+// the parameters the ledger applies to epoch E.
+const feeParamLag = 2
+
+// EffectiveFeeParams returns the margin and fixed cost (AP3X) that the ledger
+// applies to a pool's rewards for epoch: the parameters captured feeParamLag
+// epochs earlier, else the epoch's own row (pool tracked for less time).
+// Zero values mean no parameters were captured.
+func (s *Store) EffectiveFeeParams(poolID string, epoch int) (margin, fixedAp3x float64, err error) {
+	for _, e := range []int{epoch - feeParamLag, epoch} {
+		ps, found, lookupErr := s.GetPoolSchedule(poolID, e)
+		if lookupErr != nil {
+			return 0, 0, lookupErr
+		}
+		if found && (ps.Margin > 0 || ps.FixedCostAp3x > 0) {
+			return ps.Margin, ps.FixedCostAp3x, nil
+		}
+	}
+	return 0, 0, nil
+}
+
+// --- stake snapshots ---
+
+func (s *Store) HasEpochStakes(poolID string, epoch int) (bool, error) {
+	var n int64
+	err := s.db.Model(&EpochStake{}).Where("pool_id = ? AND epoch = ?", poolID, epoch).Count(&n).Error
+	return n > 0, err
+}
+
+// ReplaceEpochStakes atomically replaces a pool's stake snapshot for an epoch.
+func (s *Store) ReplaceEpochStakes(poolID string, epoch int, rows []EpochStake) error {
+	return s.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Where("pool_id = ? AND epoch = ?", poolID, epoch).Delete(&EpochStake{}).Error; err != nil {
+			return err
+		}
+		if len(rows) == 0 {
+			return nil
+		}
+		return tx.Create(&rows).Error
+	})
+}
+
+func (s *Store) EpochStakes(poolID string, epoch int) ([]EpochStake, error) {
+	var out []EpochStake
+	err := s.db.Where("pool_id = ? AND epoch = ?", poolID, epoch).Find(&out).Error
 	return out, err
 }
 
