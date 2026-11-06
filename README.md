@@ -160,3 +160,20 @@ CGO_ENABLED=0 go build -o spo-dashboard ./cmd/spo-dashboard
 Timing note: 45 pools × ~1.6 min/run ≈ 75 min of sequential cli time at each
 epoch boundary (measured: 1:35 wall, 93 MB peak RSS per run on fr-0). The
 systemd unit nice/idle-fences the daemon so cardano-node is never starved.
+
+### Reward flow page
+
+`#/reward-flow` shows the state of reward-flow (spo-infra `src/reward-flow`):
+the AP3X at each stage per balance (in pools, in hop wallets, on LBank, on the
+way to Base, on Base), fees by type, the active flows, the schedule of the 40
+pools, monthly totals and the last 50 ledger rows. The header link shows the
+state: running, PAUSED, stale or no data.
+
+- reward-flow writes the snapshot after each 60 s tick to
+  `/opt/reward-flow/status/dashboard.json` (root:relay, mode 0640). The
+  dashboard reads that file on each request (`DASHBOARD_REWARD_FLOW`; empty
+  turns the page off) and adds only its age. A snapshot older than 5 min is
+  stale: the reward-flow daemon is stopped or stuck.
+- The snapshot has tx hashes but no addresses. Explorer links (apexscan, the
+  Nexus explorer, LayerZero Scan) open without a Referer, so the explorer does
+  not learn the dashboard's address.

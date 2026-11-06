@@ -31,6 +31,7 @@ func main() {
 		dryRun     = flag.Bool("dry-run", false, "Verify cli, node, keys and Blockfrost per pool, then exit (no writes)")
 		singlePool = flag.String("pool", "", "Restrict all work to one pool (bech32 id) — staged rollout")
 		computeNow = flag.Bool("compute-now", false, "Deprecated no-op: the first scheduler tick always computes missing schedules")
+		rewardFlow = flag.String("reward-flow", envOr("DASHBOARD_REWARD_FLOW", "/opt/reward-flow/status/dashboard.json"), "reward-flow snapshot (JSON); empty turns the reward-flow page off")
 	)
 	flag.Parse()
 
@@ -74,7 +75,7 @@ func main() {
 
 	svc := leaderlog.New(store, client, cli, set, *configDir, *singlePool, logger)
 
-	server := dashweb.NewServer(store, svc.Pools, set, bfURL, logger)
+	server := dashweb.NewServer(store, svc.Pools, set, bfURL, *rewardFlow, logger)
 	httpSrv := &http.Server{Addr: set.Listen, Handler: server.Handler()}
 	go func() {
 		logger.Printf("http listening on %s", set.Listen)

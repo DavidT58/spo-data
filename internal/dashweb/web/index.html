@@ -3,13 +3,19 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>SPO Dashboard — Prime block production</title>
+<!-- The reward-flow page links txs to block explorers: send them no Referer. -->
+<meta name="referrer" content="no-referrer">
+<title>SPO Dashboard</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>⛏️</text></svg>">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
 <header>
-  <h1><a href="#/">Prime block production</a></h1>
+  <h1><a href="#/">SPO dashboard</a></h1>
+  <nav class="nav">
+    <a href="#/">Block production</a>
+    <a href="#/reward-flow">Reward flow <span id="rf-badge"></span></a>
+  </nav>
   <div id="epoch-tiles" class="tiles"></div>
 </header>
 <main id="view" aria-live="polite">

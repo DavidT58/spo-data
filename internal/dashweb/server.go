@@ -5,9 +5,12 @@ package dashweb
 import (
 	"embed"
 	"encoding/json"
+	"fmt"
+	"io"
 	"io/fs"
 	"log"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -23,28 +26,28 @@ var webFS embed.FS
 
 // Server assembles API responses from the leaderlog store. It never talks to
 // cardano-cli or Blockfrost itself — everything is read from SQLite plus the
-// daemon's in-memory health snapshot.
+// daemon's in-memory health snapshot, and the reward-flow snapshot file.
 type Server struct {
-	store  *leaderlog.Store
-	pools  func() []configs.PoolConfig
-	set    leaderlog.Settings
-	bfURL  string
-	logger *log.Logger
-
-	lbank     *lbank.Client
-	priceMu   sync.Mutex
-	priceUSDT float64
-	priceAt   time.Time
+	store      *leaderlog.Store
+	pools      func() []configs.PoolConfig
+	set        leaderlog.Settings
+	bfURL      string
+	rewardFlow string // reward-flow snapshot path; "" turns the page off
+	logger     *log.Logger
+	lbank      *lbank.Client
+	priceMu    sync.Mutex
+	priceUSDT  float64
+	priceAt    time.Time
 }
 
 const priceTTL = 5 * time.Minute
 const priceSymbol = "ap3x_usdt"
 
-func NewServer(store *leaderlog.Store, pools func() []configs.PoolConfig, set leaderlog.Settings, bfURL string, logger *log.Logger) *Server {
+func NewServer(store *leaderlog.Store, pools func() []configs.PoolConfig, set leaderlog.Settings, bfURL, rewardFlow string, logger *log.Logger) *Server {
 	if logger == nil {
 		logger = log.Default()
 	}
-	return &Server{store: store, pools: pools, set: set, bfURL: bfURL, logger: logger, lbank: lbank.NewClient()}
+	return &Server{store: store, pools: pools, set: set, bfURL: bfURL, rewardFlow: rewardFlow, logger: logger, lbank: lbank.NewClient()}
 }
 
 // price returns the cached AP3X/USDT price, refreshing at most every priceTTL.
@@ -81,6 +84,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/overview", s.handleOverview)
 	mux.HandleFunc("/api/pool/", s.handlePool)
 	mux.HandleFunc("/api/health", s.handleHealth)
+	mux.HandleFunc("/api/reward-flow", s.handleRewardFlow)
 	return mux
 }
 
@@ -313,4 +317,58 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 		leaderlog.Health
 		BlockfrostURL string `json:"blockfrost_url"`
 	}{leaderlog.GetHealth(), s.bfURL})
+}
+
+// --- /api/reward-flow ---
+
+// The reward-flow daemon (spo-infra src/reward-flow) writes its snapshot after
+// each 60 s tick. An older snapshot means the daemon is stopped or stuck.
+const (
+	rewardFlowVersion    = 1
+	rewardFlowStaleAfter = 5 * time.Minute
+	rewardFlowMaxBytes   = 8 << 20
+)
+
+// rewardFlowResponse passes the snapshot through unchanged: reward-flow
+// computes every number, the dashboard adds only the age.
+type rewardFlowResponse struct {
+	Available  bool            `json:"available"`
+	Error      string          `json:"error,omitempty"`
+	AgeSeconds int64           `json:"age_seconds"`
+	Stale      bool            `json:"stale"`
+	Snapshot   json.RawMessage `json:"snapshot,omitempty"`
+}
+
+func (s *Server) handleRewardFlow(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, readRewardFlow(s.rewardFlow, time.Now()))
+}
+
+func readRewardFlow(path string, now time.Time) rewardFlowResponse {
+	if path == "" {
+		return rewardFlowResponse{Error: "reward-flow is off (DASHBOARD_REWARD_FLOW is empty)"}
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return rewardFlowResponse{Error: fmt.Sprintf("no reward-flow snapshot: %v", err)}
+	}
+	defer f.Close()
+	raw, err := io.ReadAll(io.LimitReader(f, rewardFlowMaxBytes+1))
+	if err != nil {
+		return rewardFlowResponse{Error: fmt.Sprintf("cannot read the reward-flow snapshot: %v", err)}
+	}
+	if len(raw) > rewardFlowMaxBytes {
+		return rewardFlowResponse{Error: "the reward-flow snapshot is larger than 8 MiB"}
+	}
+	var head struct {
+		Version     int   `json:"version"`
+		GeneratedAt int64 `json:"generated_at"`
+	}
+	if err := json.Unmarshal(raw, &head); err != nil {
+		return rewardFlowResponse{Error: fmt.Sprintf("the reward-flow snapshot is not valid JSON: %v", err)}
+	}
+	if head.Version != rewardFlowVersion {
+		return rewardFlowResponse{Error: fmt.Sprintf("reward-flow snapshot version %d; this dashboard reads version %d", head.Version, rewardFlowVersion)}
+	}
+	age := now.Unix() - head.GeneratedAt
+	return rewardFlowResponse{Available: true, AgeSeconds: age, Stale: age > int64(rewardFlowStaleAfter/time.Second), Snapshot: raw}
 }
